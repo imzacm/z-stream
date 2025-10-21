@@ -1,0 +1,18 @@
+[package]
+name = "z-stream"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rand = "0.9"
+
+walkdir = "2.5"
+parking_lot = "0.12"
+flume = "0.11"
+tempfile = "3"
+
+# Used for getting media file info
+ffmpeg-next = "8"
+
+# Using cargo bindeps
+xiu = { version = "0.13", artifact = ["bin"] }
