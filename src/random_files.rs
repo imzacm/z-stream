@@ -1,12 +1,15 @@
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 use parking_lot::Mutex;
 use rand::Rng;
 use rand::seq::SliceRandom;
-use std::path::{Path, PathBuf};
 
 #[derive(Default, Debug)]
 pub struct RandomFiles {
     root_dirs: Vec<PathBuf>,
-    files: Mutex<Vec<PathBuf>>,
+    files: Arc<Mutex<Vec<PathBuf>>>,
+    file_notify_rx: Option<flume::Receiver<()>>,
     cycle: bool,
 }
 
@@ -32,9 +35,16 @@ impl RandomFiles {
         self
     }
 
-    fn ensure_files(&self) {
-        if self.cycle && self.files.lock().is_empty() {
-            walk(&self.root_dirs, &self.files);
+    fn ensure_files(&mut self) {
+        if !self.cycle || !self.files.lock().is_empty() {
+            return;
+        }
+        if self.file_notify_rx.as_ref().is_none_or(|rx| rx.is_disconnected()) {
+            let rx = walk(self.root_dirs.clone(), self.files.clone());
+            self.file_notify_rx = Some(rx);
+        }
+        if let Some(rx) = &self.file_notify_rx {
+            _ = rx.recv();
         }
     }
 
@@ -107,12 +117,19 @@ impl Iterator for RandomFiles {
     }
 }
 
-fn walk(root_dirs: &[PathBuf], files: &Mutex<Vec<PathBuf>>) {
-    std::thread::scope(|s| {
+fn walk(root_dirs: Vec<PathBuf>, files: Arc<Mutex<Vec<PathBuf>>>) -> flume::Receiver<()> {
+    let (tx, rx) = flume::bounded(1);
+    std::thread::spawn(move || {
         for dir in root_dirs {
-            s.spawn(|| walk_one(dir, files));
+            let files = files.clone();
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                walk_one(&dir, &files);
+                _ = tx.send(());
+            });
         }
     });
+    rx
 }
 
 fn walk_one(root_dir: &Path, files: &Mutex<Vec<PathBuf>>) {
