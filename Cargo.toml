@@ -3,16 +3,28 @@ name = "z-stream"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+
 [dependencies]
 rand = "0.9"
+
+thiserror = "2.0"
 
 walkdir = "2.5"
 parking_lot = "0.12"
 flume = "0.11"
-tempfile = "3"
 
-# Used for getting media file info
+tempfile = "3.23"
+
+# Used for identifying if a file has video.
 ffmpeg-next = "8"
 
-# Using cargo bindeps
-xiu = { version = "0.13", artifact = ["bin"] }
+gstreamer = "0.24"
+glib = "0.21"
+
+[build-dependencies]
+ureq = "3.1"
+flate2 = "1.1"
+tar = "0.4"
+zip = "6.0"

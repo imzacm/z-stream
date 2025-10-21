@@ -1,17 +1,17 @@
 #![deny(unused_imports, unsafe_code, clippy::all)]
 
 mod finder;
+mod mediamtx;
 mod random_files;
 mod streamer;
-mod xiu;
 
 use crate::finder::start_finder_thread;
 use crate::streamer::start_streamer_task;
-use crate::xiu::{XiuConfig, XiuServer};
 
 fn main() {
     ffmpeg_next::init().expect("Failed to initialize ffmpeg");
     ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Quiet);
+    gstreamer::init().expect("Failed to initialize GStreamer");
 
     let root_dirs = std::env::args_os().skip(1);
 
@@ -21,25 +21,35 @@ fn main() {
     // Start the background finder thread
     start_finder_thread(root_dirs, file_tx);
 
-    let config = XiuConfig::default();
-    let mut server = XiuServer::start(config).expect("Failed to start xiu server");
+    let rtmp_port: u16 = 1935;
+    let hls_port: u16 = 8888;
+    let rtsp_port: u16 = 8554;
+    let srt_port: u16 = 8890;
+    let webrtc_port: u16 = 8889;
 
-    let stream_path = "live/my_stream";
-    _ = std::fs::remove_dir_all(stream_path);
+    let mut mediamtx = mediamtx::start().expect("Failed to start mediamtx");
+
+    let stream_key = "my_stream";
+
+    // let output = streamer::Output::Rtmp(format!("rtmp://127.0.0.1:{rtmp_port}/{stream_key}"));
+    let output = streamer::Output::Srt(format!(
+        "srt://127.0.0.1:{srt_port}?streamid=publish:{stream_key}&pkt_size=1316"
+    ));
 
     // Start the background streamer task
-    start_streamer_task(
-        file_rx,
-        "ffmpeg".into(),
-        format!("rtmp://127.0.0.1:{}/{stream_path}", server.config().rtmp_port),
-    );
+    start_streamer_task(file_rx, output);
 
     println!("Clients can connect to:");
-    println!("  RTMP: rtmp://127.0.0.1:{}/{stream_path}", server.config().rtmp_port);
-    println!("  RTSP: rtsp://127.0.0.1:{}/{stream_path}", server.config().rtsp_port);
-    println!("  WebRTC: webrtc://127.0.0.1:{}/{stream_path}", server.config().webrtc_port);
-    println!("  HLS:  http://127.0.0.1:{}/{stream_path}.m3u8", server.config().hls_port);
+    println!("  RTMP: rtmp://127.0.0.1:{rtmp_port}/{stream_key}");
+    println!("  RTSP: rtsp://127.0.0.1:{rtsp_port}/{stream_key}");
+    println!("  SRT: srt://127.0.0.1:{srt_port}?streamid=read:{stream_key}");
+    println!("  WebRTC: http://127.0.0.1:{webrtc_port}/{stream_key}");
+    println!("  HLS:  http://127.0.0.1:{hls_port}/{stream_key}/index.m3u8");
     println!("\nPress Ctrl+C to shut down.");
 
-    server.wait().expect("xiu server failed");
+    let exit_status = mediamtx.wait().expect("Failed to wait for mediamtx to exit");
+    println!("Exit status: {}", exit_status);
+    if !exit_status.success() {
+        std::process::exit(1);
+    }
 }

@@ -48,6 +48,43 @@ impl RandomFiles {
         }
     }
 
+    pub fn multi_filter_map<T, F>(&mut self, mut map_fn: F) -> Vec<T>
+    where
+        F: FnMut(&Path) -> Option<T>,
+    {
+        self.ensure_files();
+
+        let mut files = self.files.lock();
+
+        let mut filtered = files
+            .iter()
+            .enumerate()
+            .filter_map(|(index, path)| {
+                let item = map_fn(path)?;
+                Some((index, item))
+            })
+            .collect::<Vec<_>>();
+
+        if filtered.is_empty() {
+            return Vec::new();
+        }
+
+        let mut rng = rand::rng();
+        filtered.shuffle(&mut rng);
+
+        let n: usize = if filtered.len() == 1 { 1 } else { rng.random_range(1..filtered.len()) };
+        let mut items = Vec::with_capacity(n);
+
+        filtered.truncate(n);
+        filtered.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(*index));
+        for (index, item) in filtered {
+            files.remove(index);
+            items.push(item);
+        }
+
+        items
+    }
+
     pub fn multi_if<F>(&mut self, mut if_fn: F) -> Vec<PathBuf>
     where
         F: FnMut(&Path) -> bool,
@@ -69,9 +106,12 @@ impl RandomFiles {
         let mut rng = rand::rng();
         filtered.shuffle(&mut rng);
 
-        let n: usize = rng.random_range(1..filtered.len());
+        let n: usize = if filtered.len() == 1 { 1 } else { rng.random_range(1..filtered.len()) };
         let mut items = Vec::with_capacity(n);
-        for index in filtered.into_iter().take(n) {
+
+        filtered.truncate(n);
+        filtered.sort_unstable_by_key(|index| std::cmp::Reverse(*index));
+        for index in filtered {
             let path = files.remove(index);
             items.push(path);
         }
@@ -125,7 +165,7 @@ fn walk(root_dirs: Vec<PathBuf>, files: Arc<Mutex<Vec<PathBuf>>>) -> flume::Rece
             let tx = tx.clone();
             std::thread::spawn(move || {
                 walk_one(&dir, &files);
-                _ = tx.send(());
+                _ = tx.try_send(());
             });
         }
     });
