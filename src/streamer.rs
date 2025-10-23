@@ -96,7 +96,9 @@ struct VideoPipeline {
     rate: gstreamer::Element,
     scale: gstreamer::Element,
     caps: gstreamer::Element,
+    timecodestamper: Option<gstreamer::Element>,
     encoder: gstreamer::Element,
+    timestamper: Option<gstreamer::Element>,
     queue: gstreamer::Element,
 }
 
@@ -115,16 +117,73 @@ impl VideoPipeline {
             "video/x-raw,width=1280,height=720,pixel-aspect-ratio=1/1,framerate=30/1",
         );
 
-        let encoder = gstreamer::ElementFactory::make("x264enc").name("v_encode").build()?;
-        encoder.set_property_from_str("tune", X264Tune::ZeroLatency.as_str());
+        let mut timecodestamper = None;
+        match gstreamer::ElementFactory::make("timecodestamper")
+            .name("v_timecodestamper")
+            .build()
+        {
+            Ok(t) => {
+                timecodestamper = Some(t);
+                eprintln!("[Streamer] Using timecodestamper");
+            }
+            Err(error) => {
+                eprintln!("[Streamer] Not using timecodestamper: {error}");
+            }
+        }
+
+        let mut encoder = None;
+        for name in ["nvh264enc", "vah264enc"] {
+            match gstreamer::ElementFactory::make(name).name("v_encode").build() {
+                Ok(e) => {
+                    encoder = Some(e);
+                    eprintln!("[Streamer] Using {name}");
+                    break;
+                }
+                Err(error) => {
+                    eprintln!("[Streamer] Not using {name}: {error}");
+                }
+            }
+        }
+
+        let encoder = if let Some(encoder) = encoder {
+            encoder
+        } else {
+            gstreamer::ElementFactory::make("x264enc").name("v_encode").build()?
+        };
+
+        if encoder.has_property("tune") {
+            encoder.set_property_from_str("tune", X264Tune::ZeroLatency.as_str());
+        }
+        if encoder.has_property("byte-stream") {
+            encoder.set_property("byte-stream", true);
+        }
         encoder.set_property("key-int-max", 30u32);
-        encoder.set_property("byte-stream", true);
         encoder.set_property("bitrate", 3000u32);
+
+        let mut timestamper = None;
+        match gstreamer::ElementFactory::make("h264timestamper").name("v_timestamper").build() {
+            Ok(t) => {
+                timestamper = Some(t);
+                eprintln!("[Streamer] Using h264timestamper");
+            }
+            Err(error) => {
+                eprintln!("[Streamer] Not using h264timestamper: {error}");
+            }
+        }
 
         // Queue to decouple muxer from video encoder
         let queue = gstreamer::ElementFactory::make("queue").name("v_queue").build()?;
 
-        Ok(Self { convert, rate, scale, caps, encoder, queue })
+        Ok(Self {
+            convert,
+            rate,
+            scale,
+            caps,
+            timecodestamper,
+            encoder,
+            timestamper,
+            queue,
+        })
     }
 
     fn link(&self, pipeline: &gstreamer::Pipeline) -> Result<(), Error> {
@@ -148,21 +207,24 @@ impl VideoPipeline {
             compositor.link(&self.caps)?;
         }
 
-        gstreamer::Element::link_many([&self.caps, &self.encoder, &self.queue])?;
+        let iter = [&self.caps]
+            .into_iter()
+            .chain(self.timecodestamper.as_ref())
+            .chain([&self.encoder])
+            .chain(self.timestamper.as_ref())
+            .chain([&self.queue]);
+        gstreamer::Element::link_many(iter)?;
 
         Ok(())
     }
 
     fn elements(&self) -> impl IntoIterator<Item = &gstreamer::Element> {
-        [
-            // &self.image,
-            &self.convert,
-            &self.rate,
-            &self.scale,
-            &self.caps,
-            &self.encoder,
-            &self.queue,
-        ]
+        [&self.convert, &self.rate, &self.scale, &self.caps]
+            .into_iter()
+            .chain(self.timecodestamper.as_ref())
+            .chain([&self.encoder])
+            .chain(self.timestamper.as_ref())
+            .chain([&self.queue])
     }
 }
 
@@ -325,6 +387,9 @@ impl Pipeline {
                 }
                 if let Err(error) = pad.link(&sink) {
                     eprintln!("Failed to link video pad -> x264enc: {error}");
+                } else {
+                    // Ensure downstream gets a fresh time segment before buffers
+                    send_segment_start(&sink)
                 }
             } else if media_type.starts_with("audio/") {
                 eprintln!("[Streamer] Audio stream: {caps}");
@@ -336,6 +401,9 @@ impl Pipeline {
                 }
                 if let Err(error) = pad.link(&sink) {
                     eprintln!("Failed to link audio pad -> audioconvert: {error}");
+                } else {
+                    // Ensure downstream gets a fresh time segment before buffers
+                    send_segment_start(&sink)
                 }
             } else if media_type.starts_with("image/") {
                 eprintln!("[Streamer] Image stream: {caps}");
@@ -347,6 +415,9 @@ impl Pipeline {
                 }
                 if let Err(error) = pad.link(&sink) {
                     eprintln!("Failed to link image pad -> imagefreeze: {error}");
+                } else {
+                    // Ensure downstream gets a fresh time segment before buffers
+                    send_segment_start(&sink)
                 }
 
                 // TODO: Need imagefreeze
@@ -367,10 +438,7 @@ impl Pipeline {
                 {
                     eprintln!("[Streamer] EOS received on pad: {pad:?}");
 
-                    // Flush downstream so any pending data/EOS is cleared
-                    // decodebin will re-emit sticky events for the next file
-                    let _ = pad.send_event(gstreamer::event::FlushStart::new());
-                    let _ = pad.send_event(gstreamer::event::FlushStop::new(false));
+                    send_segment_start(pad);
 
                     // Notify control loop to switch the file
                     let _ = eos_tx.try_send(());
@@ -486,6 +554,27 @@ fn setup_muxer_drop_eos(muxer: &gstreamer::Element) {
     for pad in muxer.sink_pads() {
         pad.add_probe(gstreamer::PadProbeType::EVENT_DOWNSTREAM, muxer_on_add_probe);
     }
+}
+
+fn send_segment_start(pad: &gstreamer::Pad) {
+    // Flush downstream so any pending data/EOS is cleared
+    // decodebin will re-emit sticky events for the next file
+    let _ = pad.send_event(gstreamer::event::FlushStart::new());
+    let _ = pad.send_event(gstreamer::event::FlushStop::new(false));
+
+    let has_start = pad.sticky_event::<gstreamer::event::StreamStart>(0).is_some();
+    let has_caps = pad.sticky_event::<gstreamer::event::Caps>(0).is_some();
+
+    if !has_start || !has_caps {
+        return;
+    }
+
+    // Start a new segment at running-time 0 for the next file chunk
+    let mut segment = gstreamer::FormattedSegment::<gstreamer::ClockTime>::new();
+    segment.set_rate(1.0);
+    segment.set_flags(gstreamer::SegmentFlags::RESET);
+    segment.set_start(gstreamer::ClockTime::from_nseconds(0));
+    let _ = pad.send_event(gstreamer::event::Segment::new(&segment));
 }
 
 fn transcode_files(file_rx: flume::Receiver<Source>, output: Output) -> Result<(), Error> {
