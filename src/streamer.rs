@@ -46,6 +46,27 @@ impl X264Tune {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum NvH264Tune {
+    Default,
+    HighQuality,
+    LowLatency,
+    UltraLowLatency,
+    Lossless,
+}
+
+impl NvH264Tune {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::HighQuality => "high-quality",
+            Self::LowLatency => "low-latency",
+            Self::UltraLowLatency => "ultra-low-latency",
+            Self::Lossless => "lossless",
+        }
+    }
+}
+
 struct SourcePipeline {
     source: gstreamer::Element,
     decoder: gstreamer::Element,
@@ -132,10 +153,14 @@ impl VideoPipeline {
         }
 
         let mut encoder = None;
+        let mut tune_value = X264Tune::ZeroLatency.as_str();
         for name in ["nvh264enc", "vah264enc"] {
             match gstreamer::ElementFactory::make(name).name("v_encode").build() {
                 Ok(e) => {
                     encoder = Some(e);
+                    if name == "nvh264enc" {
+                        tune_value = NvH264Tune::LowLatency.as_str();
+                    }
                     eprintln!("[Streamer] Using {name}");
                     break;
                 }
@@ -152,13 +177,17 @@ impl VideoPipeline {
         };
 
         if encoder.has_property("tune") {
-            encoder.set_property_from_str("tune", X264Tune::ZeroLatency.as_str());
+            encoder.set_property_from_str("tune", tune_value);
         }
         if encoder.has_property("byte-stream") {
             encoder.set_property("byte-stream", true);
         }
-        encoder.set_property("key-int-max", 30u32);
-        encoder.set_property("bitrate", 3000u32);
+        if encoder.has_property("key-int-max") {
+            encoder.set_property("key-int-max", 30u32);
+        }
+        if encoder.has_property("bitrate") {
+            encoder.set_property("bitrate", 3000u32);
+        }
 
         let mut timestamper = None;
         match gstreamer::ElementFactory::make("h264timestamper").name("v_timestamper").build() {
@@ -437,8 +466,6 @@ impl Pipeline {
                     && event.type_() == gstreamer::EventType::Eos
                 {
                     eprintln!("[Streamer] EOS received on pad: {pad:?}");
-
-                    send_segment_start(pad);
 
                     // Notify control loop to switch the file
                     let _ = eos_tx.try_send(());
