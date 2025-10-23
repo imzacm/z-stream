@@ -36,8 +36,11 @@ fn main() {
         "srt://127.0.0.1:{srt_port}?streamid=publish:{stream_key}&pkt_size=1316"
     ));
 
+    let video_options = streamer::VideoOptions::HD_720;
+    let video_options = streamer::VideoOptions::PIXEL_9_PRO_FOLD_LIGHT;
+
     // Start the background streamer task
-    start_streamer_task(file_rx, output);
+    start_streamer_task(file_rx, output, video_options);
 
     println!("Clients can connect to:");
     println!("  RTMP: rtmp://127.0.0.1:{rtmp_port}/{stream_key}");

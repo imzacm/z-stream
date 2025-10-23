@@ -28,6 +28,40 @@ pub enum Output {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct VideoOptions {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u8,
+    pub bitrate: u32,
+}
+
+impl VideoOptions {
+    pub const HD_720: Self = Self {
+        width: 1280,
+        height: 720,
+        fps: 30,
+        // ~3Mbps
+        bitrate: 3000,
+    };
+
+    pub const PIXEL_9_PRO_FOLD: Self = Self {
+        width: 2076,
+        height: 2152,
+        fps: 30,
+        // ~12Mbps
+        bitrate: 12000,
+    };
+
+    pub const PIXEL_9_PRO_FOLD_LIGHT: Self = Self {
+        width: 696,
+        height: 722,
+        fps: 30,
+        // ~3Mbps
+        bitrate: 3000,
+    };
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum X264Tune {
     ZeroLatency,
     FastDecode,
@@ -124,7 +158,7 @@ struct VideoPipeline {
 }
 
 impl VideoPipeline {
-    fn create() -> Result<Self, Error> {
+    fn create(options: &VideoOptions) -> Result<Self, Error> {
         // let image = gstreamer::ElementFactory::make("imagefreeze").name("v_image").build()?;
         // image.set_property("is-live", true);
 
@@ -133,10 +167,13 @@ impl VideoPipeline {
         let scale = gstreamer::ElementFactory::make("videoscale").name("v_scale").build()?;
 
         let caps = gstreamer::ElementFactory::make("capsfilter").name("v_caps").build()?;
-        caps.set_property_from_str(
-            "caps",
-            "video/x-raw,width=1280,height=720,pixel-aspect-ratio=1/1,framerate=30/1",
+        let caps_str = format!(
+            "video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1,framerate={fps}/1",
+            width = options.width,
+            height = options.height,
+            fps = options.fps
         );
+        caps.set_property_from_str("caps", &caps_str);
 
         let mut timecodestamper = None;
         match gstreamer::ElementFactory::make("timecodestamper")
@@ -186,7 +223,7 @@ impl VideoPipeline {
             encoder.set_property("key-int-max", 30u32);
         }
         if encoder.has_property("bitrate") {
-            encoder.set_property("bitrate", 3000u32);
+            encoder.set_property("bitrate", options.bitrate);
         }
 
         let mut timestamper = None;
@@ -370,13 +407,13 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    fn create(output: Output) -> Result<Self, Error> {
+    fn create(output: Output, options: &VideoOptions) -> Result<Self, Error> {
         let (eos_tx, eos_rx) = flume::bounded(1);
 
         let pipeline = gstreamer::Pipeline::new();
 
         let source = SourcePipeline::create()?;
-        let video = VideoPipeline::create()?;
+        let video = VideoPipeline::create(options)?;
         let audio = AudioPipeline::create()?;
 
         let output = OutputPipeline::create(output)?;
@@ -553,10 +590,6 @@ impl Pipeline {
             });
         }
 
-        // if path.extension().map(|e| e == "jpg").unwrap_or(false) {
-        //
-        // }
-
         self.source.start();
         self.wait_for_eos();
 
@@ -604,8 +637,12 @@ fn send_segment_start(pad: &gstreamer::Pad) {
     let _ = pad.send_event(gstreamer::event::Segment::new(&segment));
 }
 
-fn transcode_files(file_rx: flume::Receiver<Source>, output: Output) -> Result<(), Error> {
-    let mut pipeline = Pipeline::create(output)?;
+fn transcode_files(
+    file_rx: flume::Receiver<Source>,
+    output: Output,
+    options: &VideoOptions,
+) -> Result<(), Error> {
+    let mut pipeline = Pipeline::create(output, options)?;
 
     loop {
         let source = match file_rx.recv() {
@@ -615,6 +652,11 @@ fn transcode_files(file_rx: flume::Receiver<Source>, output: Output) -> Result<(
                 break;
             }
         };
+
+        if source.path.extension().map(|e| e == "jpg").unwrap_or(false) {
+            eprintln!("[Streamer] Skipping source: {source:?}");
+            continue;
+        }
 
         println!("[Streamer] Starting source: {source:?}");
 
@@ -630,11 +672,15 @@ fn transcode_files(file_rx: flume::Receiver<Source>, output: Output) -> Result<(
     Ok(())
 }
 
-pub fn start_streamer_task(file_rx: flume::Receiver<Source>, output: Output) {
+pub fn start_streamer_task(
+    file_rx: flume::Receiver<Source>,
+    output: Output,
+    options: VideoOptions,
+) {
     std::thread::spawn(move || {
         println!("[Streamer] Streamer task started.");
 
-        match transcode_files(file_rx, output) {
+        match transcode_files(file_rx, output, &options) {
             Ok(()) => println!("[Streamer] Streamer task finished."),
             Err(error) => eprintln!("[Streamer] Streamer task failed: {error}"),
         }
