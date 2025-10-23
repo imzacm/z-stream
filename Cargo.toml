@@ -2,6 +2,14 @@
 name = "z-stream"
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
+authors = ["Zac McChesney <imzacm@gmail.com>"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
 
 [features]
 default = []
