@@ -1,10 +1,10 @@
 #![deny(unused_imports, unsafe_code, clippy::all)]
 
 mod finder;
+mod media_info;
 mod mediamtx;
 mod random_files;
 mod streamer;
-mod media_info;
 
 use crate::finder::start_finder_thread;
 use crate::streamer::start_streamer_task;
@@ -30,10 +30,10 @@ fn main() {
 
     let stream_key = "my_stream";
 
-    let output = streamer::Output::Rtmp(format!("rtmp://127.0.0.1:{rtmp_port}/{stream_key}"));
-    // let output = streamer::Output::Srt(format!(
-    //     "srt://127.0.0.1:{srt_port}?streamid=publish:{stream_key}&pkt_size=1316"
-    // ));
+    // let output = streamer::Output::Rtmp(format!("rtmp://127.0.0.1:{rtmp_port}/{stream_key}"));
+    let output = streamer::Output::Srt(format!(
+        "srt://127.0.0.1:{srt_port}?streamid=publish:{stream_key}&pkt_size=1316"
+    ));
 
     let video_options = streamer::VideoOptions::HD_720;
     let video_options = streamer::VideoOptions::PIXEL_9_PRO_FOLD_LIGHT;

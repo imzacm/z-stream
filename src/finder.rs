@@ -20,24 +20,24 @@ where
 
     std::thread::spawn(move || {
         println!("[Finder] Finder task started.");
-        let mut info_map = HashMap::new();
+        let mut info_map: HashMap<PathBuf, MediaInfo> = HashMap::new();
         loop {
             let path = random_files.next_if(|path| {
                 // We've already used this file before.
-                if info_map.contains_key(path) {
-                    return true;
+                if let Some(media_info) = info_map.get(path) {
+                    return !media_info.is_empty();
                 }
 
                 let Some(path) = Utf8Path::from_path(path) else { return false };
 
                 match MediaInfo::detect(path) {
                     Ok(media_info) => {
-                        eprintln!("[Finder] Media info for file {path}: {media_info:?}");
+                        // eprintln!("[Finder] Media info for file {path}: {media_info:?}");
                         info_map.insert(path.as_std_path().to_path_buf(), media_info);
-                        true
+                        !media_info.is_empty()
                     }
-                    Err(error) => {
-                        eprintln!("Failed to detect media info for file {path}: {error}");
+                    Err(_error) => {
+                        // eprintln!("Failed to detect media info for file {path}: {error}");
                         false
                     }
                 }

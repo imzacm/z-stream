@@ -16,17 +16,21 @@ pub enum Error {
     GlibBool(#[from] glib::BoolError),
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum MediaType {
-    Image,
-    VideoNoSound,
-    VideoWithSound,
-    AudioNoImage,
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum ImageCodec {
+    Jpeg,
+    Png,
+    #[default]
     Unknown,
+}
+
+impl ImageCodec {
+    pub const ALL: [Self; 3] = [Self::Jpeg, Self::Png, Self::Unknown];
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub struct ImageInfo {
+    pub codec: ImageCodec,
     pub horizontal_ppi: Option<f64>,
     pub vertical_ppi: Option<f64>,
 }
@@ -50,20 +54,12 @@ impl MediaInfo {
         detect_media(path)
     }
 
-    pub const fn media_type(&self) -> MediaType {
-        if self.video.is_some() {
-            if self.audio.is_some() {
-                MediaType::VideoWithSound
-            } else {
-                MediaType::VideoNoSound
-            }
-        } else if self.audio.is_some() {
-            MediaType::AudioNoImage
-        } else if self.image.is_some() {
-            MediaType::Image
-        } else {
-            MediaType::Unknown
-        }
+    pub fn is_empty(&self) -> bool {
+        self.image.is_none() && self.video.is_none() && self.audio.is_none()
+    }
+
+    pub fn play_duration(&self) -> gstreamer::ClockTime {
+        self.duration.unwrap_or_else(|| 5 * gstreamer::ClockTime::SECOND)
     }
 }
 
@@ -127,6 +123,20 @@ fn add_stream_info(info: &DiscovererStreamInfo, media_info: &Mutex<MediaInfo>) {
 
     if is_image {
         let image = media_info.image.as_mut().unwrap();
+
+        // Detect codec from caps structure name (e.g., "image/jpeg", "image/png").
+        if let Some(caps) = info.caps()
+            && let Some(structure) = caps.structure(0)
+        {
+            let name = structure.name();
+            image.codec = if name.eq_ignore_ascii_case("image/jpeg") {
+                ImageCodec::Jpeg
+            } else if name.eq_ignore_ascii_case("image/png") {
+                ImageCodec::Png
+            } else {
+                ImageCodec::Unknown
+            };
+        }
 
         for (tag, mut values) in tags.iter_generic() {
             if tag == "image-horizontal-ppi"
@@ -193,23 +203,25 @@ fn detect_media(path: &Utf8Path) -> Result<MediaInfo, Error> {
     discoverer.connect_discovered(move |_discoverer, info, error| {
         let uri = info.uri();
         match info.result() {
-            DiscovererResult::Ok => println!("Discovered {uri}"),
-            DiscovererResult::UriInvalid => println!("Invalid uri {uri}"),
+            DiscovererResult::Ok => {
+                // println!("Discovered {uri}");
+            }
+            DiscovererResult::UriInvalid => eprintln!("Invalid uri {uri}"),
             DiscovererResult::Error => {
                 if let Some(msg) = error {
-                    println!("{msg}");
+                    eprintln!("{msg}");
                 } else {
-                    println!("Unknown error")
+                    eprintln!("Unknown error")
                 }
             }
-            DiscovererResult::Timeout => println!("Timeout"),
-            DiscovererResult::Busy => println!("Busy"),
+            DiscovererResult::Timeout => eprintln!("Timeout"),
+            DiscovererResult::Busy => eprintln!("Busy"),
             DiscovererResult::MissingPlugins => {
                 if let Some(s) = info.misc() {
-                    println!("{s}");
+                    eprintln!("{s}");
                 }
             }
-            _ => println!("Unknown result"),
+            _ => eprintln!("Unknown result"),
         }
 
         if info.result() != DiscovererResult::Ok {
