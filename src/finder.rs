@@ -1,12 +1,15 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
+use camino::Utf8Path;
+
+use crate::media_info::MediaInfo;
 use crate::random_files::RandomFiles;
 
 #[derive(Debug, Clone)]
 pub struct Source {
     pub path: PathBuf,
-    pub duration: Duration,
+    pub media_info: MediaInfo,
 }
 
 pub fn start_finder_thread<I>(root_dirs: I, tx: flume::Sender<Source>)
@@ -17,31 +20,33 @@ where
 
     std::thread::spawn(move || {
         println!("[Finder] Finder task started.");
+        let mut info_map = HashMap::new();
         loop {
             let path = random_files.next_if(|path| {
-                let Ok(ctx) = ffmpeg_next::format::input(path) else { return false };
-                ctx.streams().any(|s| {
-                    matches!(
-                        s.parameters().medium(),
-                        ffmpeg_next::media::Type::Video | ffmpeg_next::media::Type::Audio
-                    )
-                })
+                // We've already used this file before.
+                if info_map.contains_key(path) {
+                    return true;
+                }
+
+                let Some(path) = Utf8Path::from_path(path) else { return false };
+
+                match MediaInfo::detect(path) {
+                    Ok(media_info) => {
+                        eprintln!("[Finder] Media info for file {path}: {media_info:?}");
+                        info_map.insert(path.as_std_path().to_path_buf(), media_info);
+                        true
+                    }
+                    Err(error) => {
+                        eprintln!("Failed to detect media info for file {path}: {error}");
+                        false
+                    }
+                }
             });
 
             let Some(path) = path else { continue };
 
-            let mut duration = Duration::default();
-            {
-                let ctx = ffmpeg_next::format::input(&path).unwrap();
-                for stream in ctx.streams() {
-                    let time_base: f64 = stream.time_base().into();
-                    let duration_secs = stream.duration() as f64 * time_base;
-                    duration = duration.max(Duration::from_secs_f64(duration_secs));
-                }
-            }
-
-            // let Some(path) = random_files.next() else { continue };
-            let source = Source { path, duration };
+            let media_info = info_map.get(&path).unwrap();
+            let source = Source { path, media_info: *media_info };
             if let Err(error) = tx.send(source) {
                 eprintln!("[Finder] Channel closed. Shutting down. {error}");
                 return;

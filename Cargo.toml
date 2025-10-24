@@ -19,16 +19,16 @@ rand = "0.9"
 
 thiserror = "2.0"
 
+camino = "1.2"
+
 walkdir = "2.5"
 parking_lot = "0.12"
 flume = "0.11"
 
 tempfile = "3.23"
 
-# Used for identifying if a file has video.
-ffmpeg-next = "8"
-
 gstreamer = "0.24"
+gstreamer-pbutils = "0.24"
 glib = "0.21"
 
 [build-dependencies]
