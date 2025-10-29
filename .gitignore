@@ -1,2 +1,5 @@
 /target
 /.idea
+
+/deploy.sh
+/z-stream.service

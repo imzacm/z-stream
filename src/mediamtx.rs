@@ -1,16 +1,18 @@
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, OnceLock};
 
-const CONFIG_YAML: &str = r#"
-###############################################
-# Path settings
-paths:
-  my_stream:
+use crate::{RTSP_PORT, STREAM_KEY};
 
-  # Settings under path "all_others" are applied to all paths that
-  # do not match another entry.
-  all_others:
-"#;
+fn config_yaml() -> String {
+    format!(
+        "\
+ paths:
+   {STREAM_KEY}:
+     source: rtsp://127.0.0.1:{RTSP_PORT}/{STREAM_KEY}
+     sourceOnDemand: yes
+"
+    )
+}
 
 const MEDIAMTX_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mediamtx"));
 
@@ -37,7 +39,7 @@ fn get_mediamtx_dir() -> &'static Result<Arc<tempfile::TempDir>, Arc<std::io::Er
         }
 
         let mediamtx_yml = dir.path().join("mediamtx.yml");
-        std::fs::write(&mediamtx_yml, CONFIG_YAML)?;
+        std::fs::write(&mediamtx_yml, config_yaml())?;
 
         Ok(Arc::new(dir))
     })

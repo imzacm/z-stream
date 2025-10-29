@@ -1,12 +1,14 @@
+use std::path::Path;
 use std::sync::Arc;
 
-use camino::Utf8Path;
 use gstreamer::prelude::*;
 use gstreamer_pbutils::prelude::DiscovererStreamInfoExt;
 use gstreamer_pbutils::{
     Discoverer, DiscovererContainerInfo, DiscovererResult, DiscovererStreamInfo,
 };
 use parking_lot::Mutex;
+
+use crate::media_type::MediaType;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -50,7 +52,7 @@ pub struct MediaInfo {
 }
 
 impl MediaInfo {
-    pub fn detect(path: &Utf8Path) -> Result<Self, Error> {
+    pub fn detect(path: &Path) -> Result<Self, Error> {
         detect_media(path)
     }
 
@@ -61,15 +63,19 @@ impl MediaInfo {
     pub fn play_duration(&self) -> gstreamer::ClockTime {
         self.duration.unwrap_or_else(|| 5 * gstreamer::ClockTime::SECOND)
     }
-}
 
-fn send_value_as_str(v: &glib::SendValue) -> Option<String> {
-    if let Ok(s) = v.get::<&str>() {
-        Some(s.to_string())
-    } else if let Ok(serialized) = v.serialize() {
-        Some(serialized.into())
-    } else {
-        None
+    pub fn media_type(&self) -> MediaType {
+        if self.video.is_some() {
+            if self.audio.is_some() {
+                MediaType::VideoWithAudio
+            } else {
+                MediaType::VideoWithoutAudio
+            }
+        } else if self.image.is_none() {
+            MediaType::Image
+        } else {
+            MediaType::Unknown
+        }
     }
 }
 
@@ -190,11 +196,11 @@ fn add_topology(info: &DiscovererStreamInfo, media_info: &Mutex<MediaInfo>) {
     }
 }
 
-fn detect_media(path: &Utf8Path) -> Result<MediaInfo, Error> {
+fn detect_media(path: &Path) -> Result<MediaInfo, Error> {
     let loop_ = glib::MainLoop::new(None, false);
     let timeout = 5 * gstreamer::ClockTime::SECOND;
 
-    let uri = format!("file://{path}");
+    let uri = glib::filename_to_uri(path, None)?;
     let discoverer = Discoverer::new(timeout)?;
 
     let media_info = Arc::new(Mutex::new(MediaInfo::default()));
