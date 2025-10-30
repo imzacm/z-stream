@@ -20,9 +20,17 @@ pub fn create_video_encoder() -> Result<gstreamer::Element, Error> {
 fn create_video_encoder_inner(factory: &str) -> Result<gstreamer::Element, Error> {
     let encoder = gstreamer::ElementFactory::make(factory).name("v_encode").build()?;
 
-    if encoder.has_property("tune") {
-        let tune_value = if factory == "nvh264enc" { "ultra-low-latency" } else { "zerolatency" };
-        encoder.set_property_from_str("tune", tune_value);
+    if factory == "nvh264enc" {
+        // Use preset for a better quality/latency balance than "tune"
+        encoder.set_property_from_str("preset", "low-latency-hq");
+
+        // Use Constant Bitrate (CBR) for streaming
+        encoder.set_property_from_str("rc-mode", "cbr");
+
+        // Set a target bitrate (e.g., 4 Mbps for 720p)
+        encoder.set_property("bitrate", 4000u32);
+    } else if encoder.has_property("tune") {
+        encoder.set_property_from_str("tune", "zerolatency");
     }
 
     if encoder.has_property("key-int-max") {
@@ -30,7 +38,7 @@ fn create_video_encoder_inner(factory: &str) -> Result<gstreamer::Element, Error
     }
 
     // if encoder.has_property("bitrate") {
-    //     encoder.set_property("bitrate", options.bitrate);
+    //     encoder.set_property("bitrate", 4000000u32);
     // }
 
     Ok(encoder)

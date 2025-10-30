@@ -33,7 +33,7 @@ pub enum Event {
 }
 
 pub fn create_server(
-    file_rx: flume::Receiver<PathBuf>,
+    root_dirs: Vec<PathBuf>,
     command_rx: flume::Receiver<Command>,
     event_tx: flume::Sender<Event>,
     rtsp_port: u16,
@@ -51,7 +51,7 @@ pub fn create_server(
     let path = format!("/{stream_key}");
     mounts.add_factory(&path, factory.clone());
 
-    std::thread::spawn(move || file_feeder_task(file_rx, command_rx, event_tx, appsrc_storage));
+    std::thread::spawn(move || file_feeder_task(root_dirs, command_rx, event_tx, appsrc_storage));
 
     Ok(server)
 }

@@ -10,6 +10,8 @@ fn config_yaml() -> String {
    {STREAM_KEY}:
      source: rtsp://127.0.0.1:{RTSP_PORT}/{STREAM_KEY}
      sourceOnDemand: yes
+     sourceOnDemandStartTimeout: 1m
+     sourceOnDemandCloseAfter: 1m
 "
     )
 }

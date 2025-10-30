@@ -6,6 +6,7 @@ use gstreamer::prelude::*;
 use super::{AppSources, AppSrcStorage, Command, Error, Event};
 use crate::media_info::MediaInfo;
 use crate::media_type::MediaType;
+use crate::random_files::RandomFiles;
 
 /// Blocks until the AppSrc is available in the shared storage.
 fn get_app_sources(storage: AppSrcStorage) -> AppSources {
@@ -18,15 +19,6 @@ fn get_app_sources(storage: AppSrcStorage) -> AppSources {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
-
-// TODO
-// let counter_overlay = gstreamer::ElementFactory::make("textoverlay")
-//     .name("counter_overlay")
-//     .property_from_str("halignment", "right")
-//     .property_from_str("valignment", "top")
-//     .property_from_str("font-desc", "Sans, 20")
-//     .property_from_str("text", "00:00")
-//     .build()?;
 
 fn create_title_overlay(path: &Path) -> Result<gstreamer::Element, Error> {
     let name = path.file_name().unwrap().to_string_lossy();
@@ -462,7 +454,7 @@ fn create_image_pipeline(
 /// Task for the thread that feeds the RTSP stream.
 /// It waits for file paths from the channel and runs a pipeline for each.
 pub fn file_feeder_task(
-    file_rx: flume::Receiver<PathBuf>,
+    root_dirs: Vec<PathBuf>,
     command_rx: flume::Receiver<Command>,
     event_tx: flume::Sender<Event>,
     storage: AppSrcStorage,
@@ -491,30 +483,17 @@ pub fn file_feeder_task(
         }
     });
 
-    loop {
-        let path = match file_rx.recv() {
-            Ok(path) => path,
-            Err(_) => {
-                // Channel is closed, the app is shutting down
-                println!("Feeder thread: Channel closed. Sending EOS to RTSP stream.");
-                // Send EOS to both streams
-                if let Err(error) = appsrcs.video.end_of_stream() {
-                    eprintln!("Failed to send EOS to video: {error}");
-                }
-                if let Err(error) = appsrcs.audio.end_of_stream() {
-                    eprintln!("Failed to send EOS to audio: {error}");
-                }
-                break;
-            }
-        };
-
+    for path in RandomFiles::new(root_dirs) {
+        println!("Path: {}", path.display());
         let media_info = match MediaInfo::detect(&path) {
-            Ok(media_type) => media_type,
+            Ok(media_info) if !media_info.is_empty() => media_info,
+            Ok(_) => continue,
             Err(error) => {
-                eprintln!("Failed to get media type: {error}");
+                eprintln!("Failed to get media info: {error}");
                 continue;
             }
         };
+
         let media_type = media_info.media_type();
         let duration = media_info.duration;
 

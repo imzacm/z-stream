@@ -8,9 +8,9 @@ mod mediamtx;
 mod random_files;
 mod stream;
 
-use gstreamer_rtsp_server::prelude::RTSPServerExtManual;
+use std::path::PathBuf;
 
-use crate::finder::start_finder_thread;
+use gstreamer_rtsp_server::prelude::RTSPServerExtManual;
 
 const STREAM_KEY: &str = "my_stream";
 const RTSP_PORT: u16 = 18554;
@@ -19,13 +19,7 @@ const API_PORT: u16 = 18080;
 fn main() {
     gstreamer::init().expect("Failed to initialize GStreamer");
 
-    let root_dirs = std::env::args_os().skip(1);
-
-    // Channel for file paths (Finder -> Streamer)
-    let (file_tx, file_rx) = flume::bounded(20);
-
-    // Start the background finder thread
-    start_finder_thread(root_dirs, file_tx);
+    let root_dirs = std::env::args_os().skip(1).map(PathBuf::from).collect::<Vec<_>>();
 
     let (command_tx, command_rx) = flume::bounded(20);
     let (event_tx, event_rx) = flume::bounded(20);
@@ -49,9 +43,7 @@ fn main() {
 
     let main_loop = glib::MainLoop::new(None, false);
 
-    // ommand_rx: flume::Receiver<Command>, event_tx
-
-    let server = stream::create_server(file_rx, command_rx, event_tx, RTSP_PORT, STREAM_KEY)
+    let server = stream::create_server(root_dirs, command_rx, event_tx, RTSP_PORT, STREAM_KEY)
         .expect("Failed to start RTSP server");
 
     let context = main_loop.context();

@@ -22,8 +22,9 @@ pub fn get_media_type(path: &Path) -> Result<MediaType, Error> {
 
     let result: Arc<Mutex<Option<MediaType>>> = Arc::new(Mutex::new(None));
 
+    let pipeline = gstreamer::Pipeline::builder().name("typefind-pipeline").build();
+    let pipeline_clone = pipeline.clone();
     let run_result = context.block_on(async {
-        let pipeline = gstreamer::Pipeline::builder().name("typefind-pipeline").build();
         let filesrc = gstreamer::ElementFactory::make("filesrc")
             .property("location", path.to_str().unwrap())
             .build()?;
@@ -84,6 +85,8 @@ pub fn get_media_type(path: &Path) -> Result<MediaType, Error> {
         pipeline.set_state(gstreamer::State::Playing)?;
         Ok::<(), Error>(())
     });
+
+    _ = pipeline_clone.set_state(gstreamer::State::Null);
 
     // Check for GStreamer errors
     run_result?;
