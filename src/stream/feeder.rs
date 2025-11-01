@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use glib::prelude::*;
 use gstreamer::prelude::*;
+use parking_lot::Mutex;
 
 use super::{AppSources, AppSrcStorage, Command, Error, Event};
 use crate::media_info::MediaInfo;
@@ -35,43 +37,54 @@ fn create_title_overlay(path: &Path) -> Result<gstreamer::Element, Error> {
 fn create_counter_overlay(
     duration: Option<gstreamer::ClockTime>,
 ) -> Result<gstreamer::Element, Error> {
-    fn counter_text(
-        elapsed: std::time::Duration,
-        duration: Option<gstreamer::ClockTime>,
-    ) -> String {
-        let elapsed = gstreamer::ClockTime::from_seconds_f64(elapsed.as_secs_f64());
-        let e_mins = elapsed.minutes();
-        let e_secs = elapsed.seconds();
-        if let Some(duration) = duration {
-            let d_mins = duration.minutes();
-            let d_secs = duration.seconds();
-            format!("{e_mins}:{e_secs} / {d_mins}:{d_secs}")
-        } else {
-            format!("{e_mins}:{e_secs}")
-        }
-    }
+    let duration_str = duration.map(|duration| {
+        let minutes = duration.minutes();
+        let seconds = duration.seconds() % 60;
+        format!("{minutes:02}:{seconds:02}")
+    });
+
+    let initial_text = if let Some(duration) = &duration_str {
+        format!("00:00 / {duration}")
+    } else {
+        "00:00".to_string()
+    };
 
     let counter_overlay = gstreamer::ElementFactory::make("textoverlay")
         .name("counter_overlay")
         .property_from_str("halignment", "right")
-        .property_from_str("valignment", "top")
+        .property_from_str("valignment", "bottom")
         .property_from_str("font-desc", "Sans, 14")
-        .property_from_str("text", &counter_text(std::time::Duration::default(), duration))
+        .property_from_str("text", &initial_text)
         .build()?;
 
+    let mut last_updated_second = Arc::new(Mutex::new(None));
+    let sink_pad = counter_overlay.static_pad("video_sink").unwrap();
     let counter_overlay_weak = counter_overlay.downgrade();
-    std::thread::spawn(move || {
-        let start = std::time::Instant::now();
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            if let Some(overlay) = counter_overlay_weak.upgrade() {
-                let elapsed = start.elapsed();
-                let text = counter_text(elapsed, duration);
-                overlay.set_property("text", &text);
-            } else {
-                break;
+    sink_pad.add_probe(gstreamer::PadProbeType::BUFFER, move |pad, info| {
+        if let Some(buffer) = info.buffer()
+            && let Some(pts) = buffer.pts()
+            && let Some(counter_overlay) = counter_overlay_weak.upgrade()
+        {
+            let current_second = pts.seconds();
+            let mut last_updated_second = last_updated_second.lock();
+
+            if last_updated_second.is_none_or(|v| v != current_second) {
+                let minutes = pts.minutes();
+                let seconds = pts.seconds() % 60;
+
+                let current = format!("{minutes:02}:{seconds:02}");
+
+                let text = if let Some(duration) = &duration_str {
+                    format!("{current} / {duration}")
+                } else {
+                    current
+                };
+                counter_overlay.set_property("text", &text);
             }
+
+            *last_updated_second = Some(current_second);
         }
+        gstreamer::PadProbeReturn::Ok
     });
 
     Ok(counter_overlay)
