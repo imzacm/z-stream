@@ -173,7 +173,7 @@ fn create_video_pipeline(
         .build()?;
 
     // Remove `no-audio=true` to let decodebin find audio
-    let decodebin = gstreamer::ElementFactory::make("decodebin").build()?;
+    let decodebin = gstreamer::ElementFactory::make("decodebin3").build()?;
 
     // --- Video Chain ---
     let videoconvert_vid = gstreamer::ElementFactory::make("videoconvert")
@@ -238,25 +238,9 @@ fn create_video_pipeline(
         let Some(pipeline) = pipeline_weak.upgrade() else { return };
 
         let pad_name = pad.name();
-        println!("Decoder: New pad added: {}", pad_name);
+        println!("Decoder: New pad added: {pad_name}");
 
-        let caps = match pad.current_caps() {
-            Some(c) => c,
-            None => {
-                eprintln!("Pad {} has no caps yet", pad.name());
-                return;
-            }
-        };
-
-        let s = match caps.structure(0) {
-            Some(s) => s,
-            None => return,
-        };
-
-        let media_type = s.name();
-        println!("Decoder: New pad added: {} ({})", pad.name(), media_type);
-
-        if media_type.starts_with("video/") {
+        if pad_name.starts_with("video_") {
             let sink_pad =
                 pipeline.by_name("videoconvert_vid").unwrap().static_pad("sink").unwrap();
             if sink_pad.is_linked() {
@@ -266,7 +250,7 @@ fn create_video_pipeline(
             if let Err(err) = pad.link(&sink_pad) {
                 eprintln!("Failed to link video pad: {}", err);
             }
-        } else if media_type.starts_with("audio/") {
+        } else if pad_name.starts_with("audio_") {
             let sink_pad =
                 pipeline.by_name("audioconvert_aud").unwrap().static_pad("sink").unwrap();
             if sink_pad.is_linked() {
@@ -277,7 +261,7 @@ fn create_video_pipeline(
                 eprintln!("Failed to link audio pad: {}", err);
             }
         } else {
-            println!("Unknown pad type: {media_type}");
+            println!("Unknown pad type: {pad_name}");
         }
     });
 
@@ -326,7 +310,7 @@ fn create_image_pipeline(
         .build()?;
 
     // Remove `no-audio=true` to let decodebin find audio
-    let decodebin = gstreamer::ElementFactory::make("decodebin").build()?;
+    let decodebin = gstreamer::ElementFactory::make("decodebin3").build()?;
 
     let imagefreeze = gstreamer::ElementFactory::make("imagefreeze").build()?;
 
@@ -388,25 +372,9 @@ fn create_image_pipeline(
     let imagefreeze_sink_page = imagefreeze.static_pad("sink").unwrap();
     decodebin.connect_pad_added(move |_, pad| {
         let pad_name = pad.name();
-        println!("Decoder: New pad added: {}", pad_name);
+        println!("Decoder: New pad added: {pad_name}");
 
-        let caps = match pad.current_caps() {
-            Some(c) => c,
-            None => {
-                eprintln!("Pad {} has no caps yet", pad.name());
-                return;
-            }
-        };
-
-        let s = match caps.structure(0) {
-            Some(s) => s,
-            None => return,
-        };
-
-        let media_type = s.name();
-        println!("Decoder: New pad added: {} ({})", pad.name(), media_type);
-
-        if media_type.starts_with("video/") {
+        if pad_name.starts_with("video_") {
             if imagefreeze_sink_page.is_linked() {
                 eprintln!("Image sink already linked, ignoring.");
                 return;
@@ -414,16 +382,8 @@ fn create_image_pipeline(
             if let Err(err) = pad.link(&imagefreeze_sink_page) {
                 eprintln!("Failed to link video pad: {}", err);
             }
-        } else if media_type.starts_with("image/") {
-            if imagefreeze_sink_page.is_linked() {
-                eprintln!("Image sink already linked, ignoring.");
-                return;
-            }
-            if let Err(err) = pad.link(&imagefreeze_sink_page) {
-                eprintln!("Failed to link image pad: {}", err);
-            }
         } else {
-            println!("Unknown pad type: {media_type}");
+            println!("Unknown pad type: {pad_name}");
         }
     });
 
