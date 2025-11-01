@@ -19,6 +19,36 @@ const API_PORT: u16 = 18080;
 fn main() {
     gstreamer::init().expect("Failed to initialize GStreamer");
 
+    let mut args = std::env::args_os().skip(1).peekable();
+    if args.peek().is_some_and(|v| v == "--test") {
+        args.next();
+        std::process::Command::new("pkill")
+            .arg("mediamtx")
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::process::Command::new("ffplay")
+                .args(["-v", "info", "rtsp://127.0.0.1:8554/my_stream"])
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            std::process::Command::new("pkill")
+                .arg("mediamtx")
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+            std::process::exit(0);
+        });
+    }
+
     let root_dirs = std::env::args_os().skip(1).map(PathBuf::from).collect::<Vec<_>>();
 
     let (command_tx, command_rx) = flume::bounded(20);
