@@ -69,8 +69,10 @@ mod imp {
                 .build();
             appsrc_video.set_caps(Some(&video_caps));
 
-            // let queue_vid = gstreamer::ElementFactory::make("queue").build().ok()?;
             let videoconvert = gstreamer::ElementFactory::make("videoconvert").build().ok()?;
+
+            let timestamper = gstreamer::ElementFactory::make("timecodestamper").build().ok()?;
+
             let x264enc = create_video_encoder().ok()?;
             let pay_vid = gstreamer::ElementFactory::make("rtph264pay")
                 .property("name", "pay0") // MUST be "pay0"
@@ -78,7 +80,7 @@ mod imp {
                 .build()
                 .ok()?;
 
-            // --- 2. Audio Branch (NEW) ---
+            // --- 2. Audio Branch ---
             let appsrc_audio = gstreamer_app::AppSrc::builder()
                 .name("audiosrc")
                 .is_live(true)
@@ -95,7 +97,6 @@ mod imp {
                 .build();
             appsrc_audio.set_caps(Some(&audio_caps));
 
-            // let queue_aud = gstreamer::ElementFactory::make("queue").build().ok()?;
             let audioconvert = gstreamer::ElementFactory::make("audioconvert").build().ok()?;
             let audiorate = gstreamer::ElementFactory::make("audiorate").build().ok()?;
             let avenc_aac = gstreamer::ElementFactory::make("avenc_aac").build().ok()?;
@@ -109,13 +110,12 @@ mod imp {
             bin.add_many([
                 // Video elements
                 appsrc_video.upcast_ref(),
-                // &queue_vid,
                 &videoconvert,
+                &timestamper,
                 &x264enc,
                 &pay_vid,
                 // Audio elements
                 appsrc_audio.upcast_ref(),
-                // &queue_aud,
                 &audioconvert,
                 &audiorate,
                 &avenc_aac,
@@ -126,8 +126,8 @@ mod imp {
             // Link video branch
             gstreamer::Element::link_many([
                 appsrc_video.upcast_ref(),
-                // &queue_vid,
                 &videoconvert,
+                &timestamper,
                 &x264enc,
                 &pay_vid,
             ])
@@ -136,7 +136,6 @@ mod imp {
             // Link audio branch
             gstreamer::Element::link_many([
                 appsrc_audio.upcast_ref(),
-                // &queue_aud,
                 &audioconvert,
                 &audiorate,
                 &avenc_aac,
