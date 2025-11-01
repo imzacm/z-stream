@@ -1,7 +1,6 @@
 #![deny(unused_imports, unsafe_code, clippy::all)]
 
 mod api;
-mod finder;
 mod media_info;
 mod media_type;
 mod mediamtx;
@@ -52,7 +51,7 @@ fn main() {
     let root_dirs = std::env::args_os().skip(1).map(PathBuf::from).collect::<Vec<_>>();
 
     let (command_tx, command_rx) = flume::bounded(20);
-    let (event_tx, event_rx) = flume::bounded(20);
+    let (event_tx, _event_rx) = flume::bounded(20);
     api::start_api_task(API_PORT, command_tx);
 
     let rtmp_port: u16 = 1935;

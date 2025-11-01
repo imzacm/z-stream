@@ -60,10 +60,6 @@ impl MediaInfo {
         self.image.is_none() && self.video.is_none() && self.audio.is_none()
     }
 
-    pub fn play_duration(&self) -> gstreamer::ClockTime {
-        self.duration.unwrap_or_else(|| 5 * gstreamer::ClockTime::SECOND)
-    }
-
     pub fn media_type(&self) -> MediaType {
         if self.video.is_some() {
             if self.audio.is_some() {
@@ -71,7 +67,7 @@ impl MediaInfo {
             } else {
                 MediaType::VideoWithoutAudio
             }
-        } else if self.image.is_none() {
+        } else if self.image.is_some() {
             MediaType::Image
         } else {
             MediaType::Unknown

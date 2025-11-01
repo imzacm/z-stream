@@ -4,8 +4,6 @@ use rand::Rng;
 use rand::seq::SliceRandom;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 
-type DefaultFilterMap = fn(PathBuf) -> Option<PathBuf>;
-
 #[derive(Debug, Clone)]
 pub struct RandomFiles {
     roots: Vec<PathBuf>,
