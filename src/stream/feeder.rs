@@ -154,12 +154,14 @@ fn create_audio_chain(pipeline: &gstreamer::Pipeline) -> Result<gstreamer_app::A
                 .build(),
         )
         .build()?;
+    let queue_audio = gstreamer::ElementFactory::make("queue").name("a_queue").build()?;
     let appsink_audio = gstreamer_app::AppSink::builder().name("appsink_audio").build();
 
     pipeline.add_many([
         &audioconvert_aud,
         &audio_resample,
         &capsfilter_aud,
+        &queue_audio,
         appsink_audio.upcast_ref(),
     ])?;
 
@@ -168,6 +170,7 @@ fn create_audio_chain(pipeline: &gstreamer::Pipeline) -> Result<gstreamer_app::A
         &audioconvert_aud,
         &audio_resample,
         &capsfilter_aud,
+        &queue_audio,
         appsink_audio.upcast_ref(),
     ])?;
 
@@ -215,6 +218,8 @@ fn create_video_pipeline(
                 .build(),
         )
         .build()?;
+
+    let queue_video = gstreamer::ElementFactory::make("queue").name("v_queue").build()?;
     let appsink_video = gstreamer_app::AppSink::builder().name("appsink_video").build();
 
     // --- Add all elements to pipeline ---
@@ -226,6 +231,7 @@ fn create_video_pipeline(
         &title_overlay,
         &counter_overlay,
         &capsfilter_vid,
+        &queue_video,
         appsink_video.upcast_ref(),
     ])?;
 
@@ -239,6 +245,7 @@ fn create_video_pipeline(
         &title_overlay,
         &counter_overlay,
         &capsfilter_vid,
+        &queue_video,
         appsink_video.upcast_ref(),
     ])?;
 
@@ -352,6 +359,8 @@ fn create_image_pipeline(
                 .build(),
         )
         .build()?;
+
+    let queue_video = gstreamer::ElementFactory::make("queue").name("v_queue").build()?;
     let appsink_video = gstreamer_app::AppSink::builder().name("appsink_video").build();
 
     // Add all elements
@@ -365,6 +374,7 @@ fn create_image_pipeline(
         &title_overlay,
         &counter_overlay,
         &capsfilter_vid,
+        &queue_video,
         appsink_video.upcast_ref(),
     ])?;
 
@@ -379,6 +389,7 @@ fn create_image_pipeline(
         &title_overlay,
         &counter_overlay,
         &capsfilter_vid,
+        &queue_video,
         appsink_video.upcast_ref(),
     ])?;
 
@@ -444,6 +455,55 @@ fn create_image_pipeline(
     Ok(pipeline)
 }
 
+fn create_pipeline(
+    path: &Path,
+    app_sources: &AppSources,
+) -> Option<(MediaType, gstreamer::Pipeline)> {
+    let media_info = match MediaInfo::detect(path) {
+        Ok(media_info) if !media_info.is_empty() => media_info,
+        Ok(_) => return None,
+        Err(error) => {
+            eprintln!("Failed to get media info: {error}");
+            return None;
+        }
+    };
+
+    let media_type = media_info.media_type();
+    let duration = media_info.duration;
+
+    let pipeline_result = match media_type {
+        MediaType::VideoWithAudio => create_video_pipeline(path, app_sources, true, duration),
+        MediaType::VideoWithoutAudio => create_video_pipeline(path, app_sources, false, duration),
+        MediaType::Image => {
+            let duration = if let Some(duration) = duration
+                && duration != gstreamer::ClockTime::ZERO
+            {
+                duration
+            } else {
+                5 * gstreamer::ClockTime::SECOND
+            };
+            create_image_pipeline(path, app_sources, duration)
+        }
+        MediaType::Unknown => {
+            eprintln!(
+                "File feeder received unknown media type {} - {media_info:?}",
+                path.display()
+            );
+            return None;
+        }
+    };
+
+    let pipeline = match pipeline_result {
+        Ok(pipeline) => pipeline,
+        Err(error) => {
+            eprintln!("Failed to create pipeline: {error}");
+            return None;
+        }
+    };
+
+    Some((media_type, pipeline))
+}
+
 /// Task for the thread that feeds the RTSP stream.
 /// It waits for file paths from the channel and runs a pipeline for each.
 pub fn file_feeder_task(
@@ -471,50 +531,9 @@ pub fn file_feeder_task(
     });
 
     for path in RandomFiles::new(root_dirs) {
-        println!("Path: {}", path.display());
-        let media_info = match MediaInfo::detect(&path) {
-            Ok(media_info) if !media_info.is_empty() => media_info,
-            Ok(_) => continue,
-            Err(error) => {
-                eprintln!("Failed to get media info: {error}");
-                continue;
-            }
-        };
-
-        let media_type = media_info.media_type();
-        let duration = media_info.duration;
+        let Some((media_type, pipeline)) = create_pipeline(&path, &appsrcs) else { continue };
 
         println!("File feeder received {media_type:?} file: {}", path.display());
-
-        let pipeline_result = match media_type {
-            MediaType::VideoWithAudio => create_video_pipeline(&path, &appsrcs, true, duration),
-            MediaType::VideoWithoutAudio => create_video_pipeline(&path, &appsrcs, false, duration),
-            MediaType::Image => {
-                let duration = if let Some(duration) = duration
-                    && duration != gstreamer::ClockTime::ZERO
-                {
-                    duration
-                } else {
-                    5 * gstreamer::ClockTime::SECOND
-                };
-                create_image_pipeline(&path, &appsrcs, duration)
-            }
-            MediaType::Unknown => {
-                eprintln!(
-                    "File feeder received unknown media type {} - {media_info:?}",
-                    path.display()
-                );
-                continue;
-            }
-        };
-
-        let pipeline = match pipeline_result {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                eprintln!("Failed to create pipeline: {error}");
-                continue;
-            }
-        };
 
         println!("Playing file: {:?}", path);
         _ = event_tx.try_send(Event::Playing { path: path.clone() });
