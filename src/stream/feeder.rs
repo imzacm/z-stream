@@ -3,22 +3,11 @@ use std::path::{Path, PathBuf};
 use glib::prelude::*;
 use gstreamer::prelude::*;
 
-use super::{AppSources, AppSrcStorage, Command, Error, Event};
+use super::Error;
 use crate::media_info::MediaInfo;
 use crate::media_type::MediaType;
 use crate::random_files::RandomFiles;
-
-/// Blocks until the AppSrc is available in the shared storage.
-fn get_app_sources(storage: AppSrcStorage) -> AppSources {
-    loop {
-        let appsrc_opt = storage.lock().clone();
-        if let Some(appsrc) = appsrc_opt {
-            println!("Feeder thread connected to appsrc.");
-            return appsrc;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-}
+use crate::stream::streame_queue::StreamQueueItem;
 
 fn create_title_overlay(path: &Path) -> Result<gstreamer::Element, Error> {
     let name = path.file_name().unwrap().to_string_lossy();
@@ -60,6 +49,7 @@ fn create_counter_overlay(
         .build()?;
 
     let counter_overlay_weak = counter_overlay.downgrade();
+    // TODO: Start thread when pipeline is running.
     std::thread::spawn(move || {
         let start = std::time::Instant::now();
         loop {
@@ -160,9 +150,10 @@ fn create_audio_chain(pipeline: &gstreamer::Pipeline) -> Result<gstreamer_app::A
 
 fn create_video_pipeline(
     path: &Path,
-    app_sources: &AppSources,
     has_audio: bool,
     duration: Option<gstreamer::ClockTime>,
+    video_tx: flume::Sender<gstreamer::Sample>,
+    audio_tx: flume::Sender<gstreamer::Sample>,
 ) -> Result<gstreamer::Pipeline, Error> {
     // filesrc -> decodebin -> videoconvert -> capsfilter -> appsink
     let pipeline = gstreamer::Pipeline::builder().name("decoder-pipeline").build();
@@ -267,29 +258,23 @@ fn create_video_pipeline(
 
     // --- AppSink Callbacks ---
     // Video callback
-    let appsrc_video_weak = app_sources.video.downgrade();
     appsink_video.set_callbacks(
         gstreamer_app::AppSinkCallbacks::builder()
             .new_sample(move |sink| {
-                let Some(appsrc_video) = appsrc_video_weak.upgrade() else {
-                    return Err(gstreamer::FlowError::Error);
-                };
                 let sample = sink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
-                appsrc_video.push_sample(&sample).map_err(|_| gstreamer::FlowError::Error)
+                video_tx.send(sample).map_err(|_| gstreamer::FlowError::Error)?;
+                Ok(gstreamer::FlowSuccess::Ok)
             })
             .build(),
     );
 
     // Audio callback
-    let appsrc_audio_weak = app_sources.audio.downgrade();
     appsink_audio.set_callbacks(
         gstreamer_app::AppSinkCallbacks::builder()
             .new_sample(move |sink| {
-                let Some(appsrc_audio) = appsrc_audio_weak.upgrade() else {
-                    return Err(gstreamer::FlowError::Error);
-                };
                 let sample = sink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
-                appsrc_audio.push_sample(&sample).map_err(|_| gstreamer::FlowError::Error)
+                audio_tx.send(sample).map_err(|_| gstreamer::FlowError::Error)?;
+                Ok(gstreamer::FlowSuccess::Ok)
             })
             .build(),
     );
@@ -299,8 +284,9 @@ fn create_video_pipeline(
 
 fn create_image_pipeline(
     path: &Path,
-    app_sources: &AppSources,
     duration: Option<gstreamer::ClockTime>,
+    video_tx: flume::Sender<gstreamer::Sample>,
+    audio_tx: flume::Sender<gstreamer::Sample>,
 ) -> Result<gstreamer::Pipeline, Error> {
     let pipeline = gstreamer::Pipeline::builder().name("image-pipeline").build();
 
@@ -388,22 +374,22 @@ fn create_image_pipeline(
     });
 
     // --- AppSink Callbacks (Identical to media pipeline) ---
-    let appsrc_video = app_sources.video.clone();
     appsink_video.set_callbacks(
         gstreamer_app::AppSinkCallbacks::builder()
             .new_sample(move |sink| {
                 let sample = sink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
-                appsrc_video.push_sample(&sample).map_err(|_| gstreamer::FlowError::Error)
+                video_tx.send(sample).map_err(|_| gstreamer::FlowError::Error)?;
+                Ok(gstreamer::FlowSuccess::Ok)
             })
             .build(),
     );
 
-    let appsrc_audio = app_sources.audio.clone();
     appsink_audio.set_callbacks(
         gstreamer_app::AppSinkCallbacks::builder()
             .new_sample(move |sink| {
                 let sample = sink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
-                appsrc_audio.push_sample(&sample).map_err(|_| gstreamer::FlowError::Error)
+                audio_tx.send(sample).map_err(|_| gstreamer::FlowError::Error)?;
+                Ok(gstreamer::FlowSuccess::Ok)
             })
             .build(),
     );
@@ -413,35 +399,8 @@ fn create_image_pipeline(
 
 /// Task for the thread that feeds the RTSP stream.
 /// It waits for file paths from the channel and runs a pipeline for each.
-pub fn file_feeder_task(
-    root_dirs: Vec<PathBuf>,
-    command_rx: flume::Receiver<Command>,
-    event_tx: flume::Sender<Event>,
-    storage: AppSrcStorage,
-) {
-    // First, wait for the RTSP client to connect and create the appsrc
-    let appsrcs = get_app_sources(storage);
-
-    // let context = glib::MainContext::new();
-    // let _guard = context.acquire().unwrap();
-    // let event_loop = glib::MainLoop::new(Some(&context), false);
-
+pub fn file_feeder_task(root_dirs: Vec<PathBuf>, queue_tx: flume::Sender<StreamQueueItem>) {
     let (abort_tx, abort_rx) = flume::bounded(1);
-
-    // let event_loop_clone = event_loop.clone();
-    let abort_tx_clone = abort_tx.clone();
-    std::thread::spawn(move || {
-        while let Ok(command) = command_rx.recv() {
-            match command {
-                Command::Skip => {
-                    println!("Skipping file");
-                    if abort_tx_clone.send(()).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
 
     for path in RandomFiles::new(root_dirs) {
         println!("Path: {}", path.display());
@@ -459,10 +418,17 @@ pub fn file_feeder_task(
 
         println!("File feeder received {media_type:?} file: {}", path.display());
 
+        let (video_tx, video_rx) = flume::bounded(10);
+        let (audio_tx, audio_rx) = flume::bounded(10);
+
         let pipeline_result = match media_type {
-            MediaType::VideoWithAudio => create_video_pipeline(&path, &appsrcs, true, duration),
-            MediaType::VideoWithoutAudio => create_video_pipeline(&path, &appsrcs, false, duration),
-            MediaType::Image => create_image_pipeline(&path, &appsrcs, duration),
+            MediaType::VideoWithAudio => {
+                create_video_pipeline(&path, true, duration, video_tx, audio_tx)
+            }
+            MediaType::VideoWithoutAudio => {
+                create_video_pipeline(&path, false, duration, video_tx, audio_tx)
+            }
+            MediaType::Image => create_image_pipeline(&path, duration, video_tx, audio_tx),
             MediaType::Unknown => {
                 eprintln!("File feeder received unknown media type: {:?}", path);
                 continue;
@@ -477,8 +443,13 @@ pub fn file_feeder_task(
             }
         };
 
-        println!("Playing file: {:?}", path);
-        _ = event_tx.try_send(Event::Playing { path: path.clone() });
+        if queue_tx
+            .send(StreamQueueItem { path, video: video_rx, audio: audio_rx })
+            .is_err()
+        {
+            eprintln!("Queue channel disconnected, aborting.");
+            break;
+        }
 
         // Start the file decoding pipeline
         pipeline.set_state(gstreamer::State::Playing).expect("Failed to start pipeline");
@@ -524,13 +495,6 @@ pub fn file_feeder_task(
         }
 
         _ = pipeline.set_state(gstreamer::State::Null);
-
-        _ = event_tx.try_send(Event::Ended { path: path.clone() });
-
-        for appsrc in [&appsrcs.video, &appsrcs.audio] {
-            appsrc.send_event(gstreamer::event::FlushStart::new());
-            appsrc.send_event(gstreamer::event::FlushStop::new(true));
-        }
     }
     println!("Feeder thread shutting down.");
 }

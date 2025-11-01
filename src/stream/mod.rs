@@ -1,6 +1,7 @@
 mod encoder;
 mod feeder;
 mod media_factory;
+mod streame_queue;
 
 use std::path::PathBuf;
 
@@ -8,6 +9,7 @@ use gstreamer_rtsp_server::prelude::{RTSPMediaFactoryExt, RTSPMountPointsExt, RT
 
 pub use self::feeder::*;
 pub use self::media_factory::*;
+use crate::stream::streame_queue::stream_queue_task;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -51,7 +53,10 @@ pub fn create_server(
     let path = format!("/{stream_key}");
     mounts.add_factory(&path, factory.clone());
 
-    std::thread::spawn(move || file_feeder_task(root_dirs, command_rx, event_tx, appsrc_storage));
+    let (queue_tx, queue_rx) = flume::bounded(10);
+
+    std::thread::spawn(move || file_feeder_task(root_dirs, queue_tx));
+    std::thread::spawn(move || stream_queue_task(queue_rx, appsrc_storage, command_rx, event_tx));
 
     Ok(server)
 }
