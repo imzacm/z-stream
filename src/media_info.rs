@@ -18,21 +18,8 @@ pub enum Error {
     GlibBool(#[from] glib::BoolError),
 }
 
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum ImageCodec {
-    Jpeg,
-    Png,
-    #[default]
-    Unknown,
-}
-
-impl ImageCodec {
-    pub const ALL: [Self; 3] = [Self::Jpeg, Self::Png, Self::Unknown];
-}
-
 #[derive(Default, Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub struct ImageInfo {
-    pub codec: ImageCodec,
     pub horizontal_ppi: Option<f64>,
     pub vertical_ppi: Option<f64>,
 }
@@ -125,20 +112,6 @@ fn add_stream_info(info: &DiscovererStreamInfo, media_info: &Mutex<MediaInfo>) {
 
     if is_image {
         let image = media_info.image.as_mut().unwrap();
-
-        // Detect codec from caps structure name (e.g., "image/jpeg", "image/png").
-        if let Some(caps) = info.caps()
-            && let Some(structure) = caps.structure(0)
-        {
-            let name = structure.name();
-            image.codec = if name.eq_ignore_ascii_case("image/jpeg") {
-                ImageCodec::Jpeg
-            } else if name.eq_ignore_ascii_case("image/png") {
-                ImageCodec::Png
-            } else {
-                ImageCodec::Unknown
-            };
-        }
 
         for (tag, mut values) in tags.iter_generic() {
             if tag == "image-horizontal-ppi"
