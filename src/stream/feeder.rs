@@ -23,13 +23,15 @@ fn get_app_sources(storage: AppSrcStorage) -> AppSources {
 }
 
 fn create_title_overlay(path: &Path) -> Result<gstreamer::Element, Error> {
-    let name = path.file_name().unwrap().to_string_lossy();
+    let name = path.to_string_lossy();
     let element = gstreamer::ElementFactory::make("textoverlay")
         .name("textoverlay")
         .property("text", name.as_ref())
         .property_from_str("valignment", "bottom") // top, center, bottom
         .property_from_str("halignment", "left") // left, center, right
-        .property_from_str("font-desc", "Sans, 14")
+        .property_from_str("font-desc", "Sans, 10")
+        .property_from_str("wrap-mode", "wordchar") // none, word, char, wordchar
+        .property("xpad", 100i32)
         .build()?;
     Ok(element)
 }
@@ -52,8 +54,8 @@ fn create_counter_overlay(
     let counter_overlay = gstreamer::ElementFactory::make("textoverlay")
         .name("counter_overlay")
         .property_from_str("halignment", "right")
-        .property_from_str("valignment", "bottom")
-        .property_from_str("font-desc", "Sans, 14")
+        .property_from_str("valignment", "top")
+        .property_from_str("font-desc", "Sans, 10")
         .property_from_str("text", &initial_text)
         .build()?;
 
