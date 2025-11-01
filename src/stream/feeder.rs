@@ -29,9 +29,8 @@ fn create_title_overlay(path: &Path) -> Result<gstreamer::Element, Error> {
         .property("text", name.as_ref())
         .property_from_str("valignment", "bottom") // top, center, bottom
         .property_from_str("halignment", "left") // left, center, right
-        .property_from_str("font-desc", "Sans, 10")
+        .property_from_str("font-desc", "Sans, 6")
         .property_from_str("wrap-mode", "wordchar") // none, word, char, wordchar
-        .property("xpad", 100i32)
         .build()?;
     Ok(element)
 }
