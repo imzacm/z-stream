@@ -455,13 +455,7 @@ pub fn file_feeder_task(
     // First, wait for the RTSP client to connect and create the appsrc
     let appsrcs = get_app_sources(storage);
 
-    // let context = glib::MainContext::new();
-    // let _guard = context.acquire().unwrap();
-    // let event_loop = glib::MainLoop::new(Some(&context), false);
-
     let (abort_tx, abort_rx) = flume::bounded(1);
-
-    // let event_loop_clone = event_loop.clone();
     let abort_tx_clone = abort_tx.clone();
     std::thread::spawn(move || {
         while let Ok(command) = command_rx.recv() {
@@ -551,14 +545,15 @@ pub fn file_feeder_task(
             }
         }
 
-        _ = pipeline.set_state(gstreamer::State::Null);
-
-        _ = event_tx.try_send(Event::Ended { path: path.clone() });
-
         for appsrc in [&appsrcs.video, &appsrcs.audio] {
             appsrc.send_event(gstreamer::event::FlushStart::new());
             appsrc.send_event(gstreamer::event::FlushStop::new(true));
         }
+
+        pipeline.send_event(gstreamer::event::FlushStart::new());
+
+        _ = pipeline.set_state(gstreamer::State::Null);
+        _ = event_tx.try_send(Event::Ended { path: path.clone() });
     }
     println!("Feeder thread shutting down.");
 }
