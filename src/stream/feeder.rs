@@ -57,10 +57,10 @@ fn create_counter_overlay(
         .property_from_str("text", &initial_text)
         .build()?;
 
-    let mut last_updated_second = Arc::new(Mutex::new(None));
+    let last_updated_second = Arc::new(Mutex::new(None));
     let sink_pad = counter_overlay.static_pad("video_sink").unwrap();
     let counter_overlay_weak = counter_overlay.downgrade();
-    sink_pad.add_probe(gstreamer::PadProbeType::BUFFER, move |pad, info| {
+    sink_pad.add_probe(gstreamer::PadProbeType::BUFFER, move |_pad, info| {
         if let Some(buffer) = info.buffer()
             && let Some(pts) = buffer.pts()
             && let Some(counter_overlay) = counter_overlay_weak.upgrade()
@@ -93,6 +93,7 @@ fn create_counter_overlay(
 fn create_silent_audio(pipeline: &gstreamer::Pipeline) -> Result<gstreamer_app::AppSink, Error> {
     // --- Audio Chain (audiotestsrc -> ...) ---
     let audiotestsrc = gstreamer::ElementFactory::make("audiotestsrc")
+        .name("audiotestsrc")
         // Generate silence
         .property_from_str("wave", "silence")
         .build()?;
@@ -313,7 +314,7 @@ fn create_video_pipeline(
 fn create_image_pipeline(
     path: &Path,
     app_sources: &AppSources,
-    duration: Option<gstreamer::ClockTime>,
+    duration: gstreamer::ClockTime,
 ) -> Result<gstreamer::Pipeline, Error> {
     let pipeline = gstreamer::Pipeline::builder().name("image-pipeline").build();
 
@@ -335,7 +336,7 @@ fn create_image_pipeline(
     let videorate_vid = gstreamer::ElementFactory::make("videorate").build()?;
 
     let title_overlay = create_title_overlay(path)?;
-    let counter_overlay = create_counter_overlay(duration)?;
+    let counter_overlay = create_counter_overlay(Some(duration))?;
 
     let capsfilter_vid = gstreamer::ElementFactory::make("capsfilter")
         .property(
@@ -381,18 +382,35 @@ fn create_image_pipeline(
 
     let appsink_audio = create_silent_audio(&pipeline)?;
 
+    let imagefreeze_src_pad = imagefreeze.static_pad("src").unwrap();
+    let audio_src_pad_weak =
+        pipeline.by_name("audiotestsrc").unwrap().static_pad("src").unwrap().downgrade();
+    imagefreeze_src_pad.add_probe(gstreamer::PadProbeType::BUFFER, move |pad, info| {
+        if let Some(buffer) = info.buffer()
+            && let Some(pts) = buffer.pts()
+            && pts > duration
+        {
+            pad.push_event(gstreamer::event::Eos::new());
+            if let Some(pad) = audio_src_pad_weak.upgrade() {
+                pad.push_event(gstreamer::event::Eos::new());
+            }
+            return gstreamer::PadProbeReturn::Remove;
+        }
+        gstreamer::PadProbeReturn::Ok
+    });
+
     // --- Dynamic linking for decodebin ---
-    let imagefreeze_sink_page = imagefreeze.static_pad("sink").unwrap();
+    let imagefreeze_sink_pad = imagefreeze.static_pad("sink").unwrap();
     decodebin.connect_pad_added(move |_, pad| {
         let pad_name = pad.name();
         println!("Decoder: New pad added: {pad_name}");
 
         if pad_name.starts_with("video_") {
-            if imagefreeze_sink_page.is_linked() {
+            if imagefreeze_sink_pad.is_linked() {
                 eprintln!("Image sink already linked, ignoring.");
                 return;
             }
-            if let Err(err) = pad.link(&imagefreeze_sink_page) {
+            if let Err(err) = pad.link(&imagefreeze_sink_pad) {
                 eprintln!("Failed to link video pad: {}", err);
             }
         } else {
@@ -475,9 +493,21 @@ pub fn file_feeder_task(
         let pipeline_result = match media_type {
             MediaType::VideoWithAudio => create_video_pipeline(&path, &appsrcs, true, duration),
             MediaType::VideoWithoutAudio => create_video_pipeline(&path, &appsrcs, false, duration),
-            MediaType::Image => create_image_pipeline(&path, &appsrcs, duration),
+            MediaType::Image => {
+                let duration = if let Some(duration) = duration
+                    && duration != gstreamer::ClockTime::ZERO
+                {
+                    duration
+                } else {
+                    5 * gstreamer::ClockTime::SECOND
+                };
+                create_image_pipeline(&path, &appsrcs, duration)
+            }
             MediaType::Unknown => {
-                eprintln!("File feeder received unknown media type: {:?}", path);
+                eprintln!(
+                    "File feeder received unknown media type {} - {media_info:?}",
+                    path.display()
+                );
                 continue;
             }
         };
@@ -495,23 +525,6 @@ pub fn file_feeder_task(
 
         // Start the file decoding pipeline
         pipeline.set_state(gstreamer::State::Playing).expect("Failed to start pipeline");
-
-        if media_type == MediaType::Image {
-            let abort_tx = abort_tx.clone();
-            let pipeline_weak = pipeline.downgrade();
-            // TODO: This is a potential memory leak.
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(10));
-                if pipeline_weak
-                    .upgrade()
-                    .is_none_or(|p| p.current_state() == gstreamer::State::Null)
-                {
-                    return;
-                }
-                println!("Image loop: 10 seconds elapsed, stopping.");
-                _ = abort_tx.send(());
-            });
-        }
 
         // --- Bus Message Handling ---
         let bus = pipeline.bus().unwrap();
