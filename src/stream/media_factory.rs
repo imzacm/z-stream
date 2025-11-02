@@ -62,7 +62,7 @@ mod imp {
                 .build();
 
             let video_caps = gstreamer::Caps::builder("video/x-raw")
-                .field("format", gstreamer_video::VideoFormat::I420.to_string())
+                // .field("format", gstreamer_video::VideoFormat::I420)
                 .field("width", 1280)
                 .field("height", 720)
                 .field("framerate", gstreamer::Fraction::new(30, 1))
