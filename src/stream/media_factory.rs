@@ -72,7 +72,7 @@ mod imp {
 
             let videoconvert = gstreamer::ElementFactory::make("videoconvert").build().ok()?;
             let videorate = gstreamer::ElementFactory::make("videorate").build().ok()?;
-            // let timestamper = gstreamer::ElementFactory::make("timecodestamper").build().ok()?;
+            let timestamper = gstreamer::ElementFactory::make("timecodestamper").build().ok()?;
 
             let x264enc = create_video_encoder().ok()?;
             let pay_vid = gstreamer::ElementFactory::make("rtph264pay")
@@ -115,7 +115,7 @@ mod imp {
                 appsrc_video.upcast_ref(),
                 &videoconvert,
                 &videorate,
-                // &timestamper,
+                &timestamper,
                 &x264enc,
                 &pay_vid,
                 // Audio elements
@@ -132,7 +132,7 @@ mod imp {
                 appsrc_video.upcast_ref(),
                 &videoconvert,
                 &videorate,
-                // &timestamper,
+                &timestamper,
                 &x264enc,
                 &pay_vid,
             ])
