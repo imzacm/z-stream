@@ -1,6 +1,8 @@
 mod encoder;
 mod feeder;
+mod input_pipeline;
 mod media_factory;
+mod input_bin;
 
 use std::path::PathBuf;
 
@@ -19,11 +21,15 @@ pub enum Error {
 
     #[error("GStreamer state change error: {0}")]
     GstStateChange(#[from] gstreamer::StateChangeError),
+
+    #[error("GStreamer pad link error: {0}")]
+    GstPadLink(#[from] gstreamer::PadLinkError),
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Command {
     Skip,
+    Abort,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
