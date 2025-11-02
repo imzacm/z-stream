@@ -59,6 +59,7 @@ mod imp {
                 .is_live(true)
                 .stream_type(gstreamer_app::AppStreamType::Stream)
                 .format(gstreamer::Format::Time)
+                .do_timestamp(true)
                 .build();
 
             let video_caps = gstreamer::Caps::builder("video/x-raw")
@@ -70,13 +71,14 @@ mod imp {
             appsrc_video.set_caps(Some(&video_caps));
 
             let videoconvert = gstreamer::ElementFactory::make("videoconvert").build().ok()?;
-
-            let timestamper = gstreamer::ElementFactory::make("timecodestamper").build().ok()?;
+            let videorate = gstreamer::ElementFactory::make("videorate").build().ok()?;
+            // let timestamper = gstreamer::ElementFactory::make("timecodestamper").build().ok()?;
 
             let x264enc = create_video_encoder().ok()?;
             let pay_vid = gstreamer::ElementFactory::make("rtph264pay")
                 .property("name", "pay0") // MUST be "pay0"
                 .property("pt", 96_u32)
+                .property("config-interval", 1)
                 .build()
                 .ok()?;
 
@@ -86,6 +88,7 @@ mod imp {
                 .is_live(true)
                 .stream_type(gstreamer_app::AppStreamType::Stream)
                 .format(gstreamer::Format::Time)
+                .do_timestamp(true)
                 .build();
 
             // This caps MUST match the caps in feeder.rs
@@ -111,7 +114,8 @@ mod imp {
                 // Video elements
                 appsrc_video.upcast_ref(),
                 &videoconvert,
-                &timestamper,
+                &videorate,
+                // &timestamper,
                 &x264enc,
                 &pay_vid,
                 // Audio elements
@@ -127,7 +131,8 @@ mod imp {
             gstreamer::Element::link_many([
                 appsrc_video.upcast_ref(),
                 &videoconvert,
-                &timestamper,
+                &videorate,
+                // &timestamper,
                 &x264enc,
                 &pay_vid,
             ])
